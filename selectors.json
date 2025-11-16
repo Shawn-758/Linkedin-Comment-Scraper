@@ -1,0 +1,10 @@
+{
+  "feed_page": "img.global-nav__me-photo",
+  "post_activity_page": "div.scaffold-finite-scroll__content",
+  "post_list_item": "div[data-urn^='urn:li:activity']",
+  "post_timestamp_and_link": "a[data-test-actor-activity-summary__timestamp]",
+  "comment_section": "section.comments-comments-list",
+  "load_more_comments_button": "button.comments-comments-list__load-more-comments-button",
+  "commenter_link": "a.comments-post-meta__profile-link",
+  "profile_headline": "span.text-body-medium.break-words"
+}
