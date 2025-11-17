@@ -89,7 +89,18 @@ async def main(args):
                 await page.route(re.compile(r"protechts\.net"), lambda route: route.abort())
 
                 def log_console_message(msg):
-                    logging.info(f"🧑‍💻 BROWSER LOG: {msg.text}")
+                    text = msg.text
+                    # Filter out noisy logs about extensions, CSP, and WebGL
+                    if any(x in text for x in [
+                        "chrome-extension", 
+                        "Refused to connect", 
+                        "Fetch API cannot load", 
+                        "EvalError", 
+                        "GL Driver Message",
+                        "quill"
+                    ]):
+                        return
+                    logging.info(f"🧑‍💻 BROWSER LOG: {text}")
 
                 # Attach the logger to the page's 'console' event
                 page.on("console", log_console_message)

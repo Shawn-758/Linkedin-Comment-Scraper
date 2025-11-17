@@ -126,7 +126,7 @@ def save_results(results: list[dict], output_file: str, file_format: str = 'csv'
 
     try:
         if file_format == "csv":
-            df.to_csv(output_file, index=False)
+            df.to_csv(output_file, index=False, header=False)
         elif file_format == "json":
             with open(output_file, 'w') as f:
                 json.dump(results, f, indent=2)
@@ -151,7 +151,7 @@ def append_results(new_results: list[dict], output_file: str, file_format: str =
             else:
                 df = df[["profile_url"]]
             
-            df.to_csv(output_file, mode='a', header=not file_exists, index=False)
+            df.to_csv(output_file, mode='a', header=False, index=False)
             
         elif file_format == "json":
             existing_results = load_results(output_file)
