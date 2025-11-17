@@ -24,7 +24,8 @@ Clone the repository and install the required packages.
 
 * git clone (https://github.com/shawn-758/linkedin-comment-scraper.git)
 * cd linkedin-comment-scraper
-* pip install -r requirements.txt
+* pip install pandas
+* pip install playwright
 * playwright install chromium
 
 (Note: You may need to use pip3 and python3 depending on your system)
