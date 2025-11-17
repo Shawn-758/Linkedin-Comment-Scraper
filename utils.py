@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import pandas as pd
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import os
 
 # Emojis for logging
@@ -41,38 +41,27 @@ def clean_profile_url(url: str) -> str | None:
     
     return None
 
-def parse_post_time(time_str: str) -> timedelta | None:
+def get_timestamp_from_urn(urn: str) -> datetime | None:
     """
-    Parses LinkedIn's relative time string (e.g., "5h", "2d", "1w", "3mo")
-    and returns a timedelta object.
+    Extracts the precise timestamp from a LinkedIn URN.
+    Logic from ollie-boyd/linkedin-post-timestamp-extractor.
     """
-    if not time_str:
-        return None
+    try:
+        # urn:li:activity:7316321711396700160
+        match = re.search(r'activity:(\d+)', urn)
+        if not match:
+            return None
 
-    time_str = time_str.split("•")[0].strip()
-
-    match = re.match(r"(\d+)([hdwmy])", time_str)
-    if not match:
-        if "now" in time_str.lower() or "s" in time_str.lower() or "m" in time_str.lower() and not "mo" in time_str:
-             return timedelta(minutes=1)
-        return None
-
-    value = int(match.group(1))
-    unit = match.group(2)
-
-    if unit == "h":
-        return timedelta(hours=value)
-    elif unit == "d":
-        return timedelta(days=value)
-    elif unit == "w":
-        return timedelta(weeks=value)
-    elif unit == "m": 
-        return timedelta(days=value * 30) 
-    elif unit == "y":
-        return timedelta(days=value * 365) 
+        linkedin_id = match.group(1)
+        first_41_bits = bin(int(linkedin_id))[2:43]  
+        timestamp_ms = int(first_41_bits, 2)
         
-    return None
+        # Return a timezone-aware datetime object
+        return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
 
+    except Exception as e:
+        logging.warning(f"Could not decode timestamp from URN {urn}: {e}")
+        return None
 
 # --- State & Checkpointing Functions ---
 
@@ -95,7 +84,6 @@ def save_state_json(data: list | dict, file_path: str):
             json.dump(data, f, indent=2)
     except Exception as e:
         logging.error(f"Failed to save state file {file_path}: {e}")
-
 
 # --- Result Output Functions ---
 

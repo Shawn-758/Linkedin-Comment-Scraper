@@ -1,9 +1,10 @@
-import json
 import logging
 import re
-from datetime import datetime, timedelta
+import json
+import asyncio
+from datetime import datetime, timedelta, timezone
 from playwright.async_api import Page, TimeoutError, Locator
-from utils import clean_profile_url, parse_post_time, EMOJIS
+from utils import clean_profile_url, get_timestamp_from_urn, EMOJIS # <-- IMPORTED NEW FUNCTION
 
 class LinkedinScraper:
     """
@@ -12,7 +13,8 @@ class LinkedinScraper:
 
     def __init__(self, page: Page, days_limit: int, selector_file: str):
         self.page = page
-        self.days_limit = timedelta(days=days_limit)
+        self.days_limit_td = timedelta(days=days_limit)
+        self.days_limit_int = days_limit
         self.seen_post_links = set()
 
         # Load selectors from the external JSON file
@@ -36,7 +38,7 @@ class LinkedinScraper:
         try:
             logging.info("Checking for successful login...")
             await self.page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=20000)
-            await self.page.wait_for_selector(self.selectors["feed_page"], timeout=15000)
+            await self.page.wait_for_selector(self.selectors["feed_page"], timeout=180000) # 3 min timeout for manual login
             return True
         except TimeoutError:
             logging.error("Login check failed. Could not find feed page element.")
@@ -50,9 +52,9 @@ class LinkedinScraper:
         logging.info(f"Navigating to activity page: {activity_url}")
         await self.page.goto(activity_url, wait_until="domcontentloaded", timeout=20000)
 
+        # --- REMOVED THE PAUSE ---
+        
         try:
-            # Wait for the first post to appear, which is a more reliable signal
-            # than waiting for the container.
             logging.info("Waiting for post feed to load...")
             await self.page.wait_for_selector(
                 self.selectors["post_list_item"], 
@@ -66,9 +68,9 @@ class LinkedinScraper:
 
         post_links = []
         keep_scrolling = True
+        now = datetime.now(timezone.utc)
         
         while keep_scrolling:
-            # Get all post items currently visible
             posts = self.page.locator(self.selectors["post_list_item"])
             
             post_count = await posts.count()
@@ -77,45 +79,57 @@ class LinkedinScraper:
                 break
 
             logging.info(f"Found {post_count} post elements on page. Processing...")
+            new_posts_found = False
 
             for i in range(post_count):
                 post = posts.nth(i)
                 try:
-                    link_element = post.locator(self.selectors["post_timestamp_and_link"])
-                    
-                    if await link_element.count() > 0:
-                        href = await link_element.get_attribute("href")
-                        time_str = await link_element.inner_text()
-                        
-                        if href and not href.startswith("https://"):
-                            href = f"https://www.linkedin.com{href}"
-                        
-                        if href:
-                            href = href.split("?")[0]
-                        
-                        if not href in self.seen_post_links:
-                            self.seen_post_links.add(href)
+                    # --- *** NEW LOGIC: Get URN from the post element itself *** ---
+                    post_urn = await post.get_attribute("data-urn")
+                    # --- *** ---
 
-                            time_str = time_str.strip()
-                            post_age = parse_post_time(time_str)
-                            
-                            if post_age is None:
-                                logging.warning(f"Could not parse timestamp: '{time_str}' for post {href}")
-                                continue
+                    if post_urn:
+                        # Build the permalink from the URN
+                        post_id = post_urn.split(":")[-1]
+                        clean_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{post_id}/"
 
-                            if post_age <= self.days_limit:
-                                post_links.append(href)
-                            else:
-                                logging.info(f"  -> Found post older than {self.days_limit} ({time_str}). Stopping scroll.")
-                                keep_scrolling = False
-                                break 
+                        if clean_url in self.seen_post_links:
+                            continue # Already processed this post
+                        
+                        self.seen_post_links.add(clean_url)
+                        new_posts_found = True
+
+                        # --- *** NEW LOGIC: Get timestamp from URN *** ---
+                        post_timestamp = get_timestamp_from_urn(post_urn)
+                        if post_timestamp is None:
+                            logging.warning(f"  -> Could not parse timestamp from URN {post_urn}. Skipping.")
+                            continue
+                        
+                        post_age_td = now - post_timestamp
+                        # --- *** ---
+
+                        if post_age_td <= self.days_limit_td:
+                            post_links.append(clean_url)
+                        else:
+                            logging.info(f"  -> Reached post older than {self.days_limit_int} days ({post_age_td.days} days old). Stopping scroll.")
+                            keep_scrolling = False
+                            break
+                    else:
+                        logging.warning(f"  -> Found post element but could not extract data-urn. Skipping. (Post index: {i})")
+
                 except Exception as e:
-                    logging.warning(f"  -> Error processing post: {e}")
-                    continue
+                    logging.error(f"  -> Error processing a post element: {e}")
 
+                if not keep_scrolling:
+                    break 
+            
             if not keep_scrolling:
                 break 
             
+            if not new_posts_found and post_count > 0:
+                logging.info("  -> No new posts found in the last scroll. Reached end.")
+                break
+
             logging.info(f"  -> Scrolling to load more posts... (Found {len(post_links)} so far)")
             await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             
@@ -127,15 +141,15 @@ class LinkedinScraper:
 
         return list(set(post_links)) # Return unique links
 
-    async def _get_post_details(self, post: Locator) -> (str, str):
-        """Extracts link and timestamp from a post locator."""
+    # --- THIS FUNCTION IS NO LONGER USED, BUT WE LEAVE IT ---
+    async def _get_post_link(self, post: Locator) -> str | None:
+        """Extracts link from a post locator."""
         try:
-            link_element = post.locator(self.selectors["post_timestamp_and_link"])
-            href = await link_element.get_attribute("href")
-            time_str = await link_element.inner_text()
-            return href, time_str
-        except (TimeoutError, AttributeError):
-            return None, None
+            link_element = post.locator(self.selectors["post_link"]).first
+            href = await link_element.get_attribute("href", timeout=1000)
+            return href
+        except Exception:
+            return None
 
 
     async def get_commenters_from_post(self, post_url: str) -> set[str]:
@@ -144,27 +158,23 @@ class LinkedinScraper:
         """
         await self.page.goto(post_url, wait_until="domcontentloaded", timeout=20000)
 
-        # Wait for the comment section to load
         try:
             await self.page.wait_for_selector(self.selectors["comment_section"], timeout=10000)
         except TimeoutError:
-            logging.warning("  -> No comment section found on this post.")
+            logging.warning(f"  -> No comment section found on this post. Skipping.")
             return set()
 
-        # Click "load more comments" button until it disappears
         while True:
             try:
                 load_more_button = self.page.locator(self.selectors["load_more_comments_button"]).first
                 if await load_more_button.is_visible():
                     await load_more_button.click()
-                    # Add a small delay for comments to load
                     await self.page.wait_for_timeout(1000) 
                 else:
                     break
-            except (TimeoutError, Error):
+            except Exception:
                 break
         
-        # Scrape commenter links
         commenter_links = await self.page.locator(self.selectors["commenter_link"]).all()
         commenter_urls = set()
         for link in commenter_links:
@@ -184,7 +194,7 @@ class LinkedinScraper:
                 headline_element = self.page.locator(self.selectors["profile_headline"]).first
                 headline = await headline_element.inner_text(timeout=5000)
                 results.append({"profile_url": url, "headline": headline.strip()})
-            except (TimeoutError, Error) as e:
+            except Exception as e:
                 logging.warning(f"  -> Could not scrape headline for {url}. Error: {e}")
                 results.append({"profile_url": url, "headline": "ERROR: Could not scrape"})
         return results

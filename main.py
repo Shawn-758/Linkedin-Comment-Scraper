@@ -121,62 +121,65 @@ async def main(args):
                     # --- Define State/Output Files ---
                     output_file = os.path.join(args.output_dir, f"{profile_name}.{args.format}")
                     posts_state_file = os.path.join(args.state_dir, f"{profile_name}_posts.json")
-
-                    # --- 1. Get Post Links (with Checkpointing) ---
-                    post_links = utils.load_state_json(posts_state_file)
-                    if post_links is None:
-                        logging.info(f"{EMOJIS['search']} No state file found. Scraping post links from scratch...")
-                        post_links = await scraper.get_post_links(base_url)
-                        if not post_links:
-                            logging.warning("⚠️ No posts found for this user. Skipping.")
-                            continue
-                        utils.save_state_json(post_links, posts_state_file)
-                        logging.info(f"Found {len(post_links)} posts. Saved links to state file.")
-                    else:
-                        logging.info(f"Loaded {len(post_links)} post links from state file.")
-
-                    # --- 2. Load Existing Results ---
-                    all_commenter_results = utils.load_results(output_file)
-                    all_commenter_urls = {res['profile_url'] for res in all_commenter_results}
-                    logging.info(f"Loaded {len(all_commenter_urls)} existing commenters from {output_file}.")
-
-                    # --- 3. Scrape Commenters (Post by Post) ---
-                    posts_to_process = list(post_links) # Copy to modify
-                    for j, post_link in enumerate(posts_to_process):
-                        logging.info(f"\n--- Processing post {j+1}/{len(posts_to_process)} ---")
-                        logging.info(f"  -> URL: {post_link}")
-
-                        # Scrape commenters from the current post
-                        commenter_urls = await scraper.get_commenters_from_post(post_link)
-                        new_commenter_urls = commenter_urls - all_commenter_urls
-                        logging.info(f"  -> Found {len(commenter_urls)} total commenters ({len(new_commenter_urls)} new).")
-
-                        if not new_commenter_urls:
-                            continue
-
-                        # Scrape headlines if enabled
-                        if args.scrape_headlines:
-                            new_results = await scraper.get_profile_headlines(new_commenter_urls)
+                    
+                    all_commenter_results = []
+                    try:
+                        # --- 1. Get Post Links (with Checkpointing) ---
+                        post_links = utils.load_state_json(posts_state_file)
+                        if post_links is None:
+                            logging.info(f"{EMOJIS['search']} No state file found. Scraping post links from scratch...")
+                            post_links = await scraper.get_post_links(base_url)
+                            if not post_links:
+                                logging.warning("⚠️ No posts found for this user. Skipping.")
+                                continue
+                            utils.save_state_json(post_links, posts_state_file)
+                            logging.info(f"Found {len(post_links)} posts. Saved links to state file.")
                         else:
-                            new_results = [{"profile_url": url, "headline": ""} for url in new_commenter_urls]
+                            logging.info(f"Loaded {len(post_links)} post links from state file.")
 
-                        all_commenter_results.extend(new_results)
-                        all_commenter_urls.update(new_commenter_urls)
+                        # --- 2. Load Existing Results ---
+                        all_commenter_results = utils.load_results(output_file)
+                        all_commenter_urls = {res['profile_url'] for res in all_commenter_results if 'profile_url' in res}
+                        logging.info(f"Loaded {len(all_commenter_urls)} existing commenters from {output_file}.")
 
-                        # Save incrementally if enabled
-                        if args.incremental_save:
-                            utils.append_results(new_results, output_file, args.format)
-                            logging.info(f"  -> Incrementally saved {len(new_results)} new commenters.")
+                        # --- 3. Scrape Commenters (Post by Post) ---
+                        posts_to_process = list(post_links) # Copy to modify
+                        for j, post_link in enumerate(posts_to_process):
+                            logging.info(f"\n--- Processing post {j+1}/{len(posts_to_process)} ---")
+                            logging.info(f"  -> URL: {post_link}")
+
+                            # Scrape commenters from the current post
+                            commenter_urls = await scraper.get_commenters_from_post(post_link)
+                            new_commenter_urls = commenter_urls - all_commenter_urls
+                            logging.info(f"  -> Found {len(commenter_urls)} total commenters ({len(new_commenter_urls)} new).")
+
+                            if not new_commenter_urls:
+                                continue
+
+                            # Scrape headlines if enabled
+                            if args.scrape_headlines:
+                                new_results = await scraper.get_profile_headlines(new_commenter_urls)
+                            else:
+                                new_results = [{"profile_url": url, "headline": ""} for url in new_commenter_urls]
+
+                            all_commenter_results.extend(new_results)
+                            all_commenter_urls.update(new_commenter_urls)
+
+                            # Save incrementally if enabled
+                            if args.incremental_save:
+                                utils.append_results(new_results, output_file, args.format)
+                                logging.info(f"  -> Incrementally saved {len(new_results)} new commenters.")
                     
-                    # --- 4. Final Save (if not incremental) ---
-                    if not args.incremental_save:
-                        utils.save_results(all_commenter_results, output_file, args.format)
-                        logging.info(f"{EMOJIS['disk']} Saved {len(all_commenter_results)} total commenters to {output_file}.")
-                    
-                    # --- 5. Cleanup ---
-                    if os.path.exists(posts_state_file):
-                        os.remove(posts_state_file)
-                        logging.info(f"Removed state file: {posts_state_file}")
+                    finally:
+                        # --- Final Save (if not incremental) ---
+                        if not args.incremental_save and all_commenter_results:
+                            utils.save_results(all_commenter_results, output_file, args.format)
+                            logging.info(f"{EMOJIS['disk']} Saved {len(all_commenter_results)} total commenters to {output_file}.")
+                        
+                        # --- Cleanup ---
+                        if os.path.exists(posts_state_file):
+                            os.remove(posts_state_file)
+                            logging.info(f"Removed state file: {posts_state_file}")
 
 
             except Error as e:

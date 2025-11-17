@@ -1,2 +1,26 @@
+# Byte-compiled / optimized / C extensions
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
 venv/
-echo "venv/" >> .gitignorevenv/
+
+# Output & State
+# Contains generated CSV/JSON files and state checkpoints
+output/
+
+# Sensitive credentials
+# Contains your LinkedIn session cookies
+cookies.json
+
+# Log files
+*.log
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# macOS specific
+.DS_Store
